@@ -1,6 +1,8 @@
 from depixlib.Rectangle import *
 from random import choice
 from PIL import Image
+import logging
+logging.basicConfig(level=logging.INFO)
 
 
 
@@ -26,7 +28,7 @@ def findSameColorRectangle(pixelatedImage, startCoordinates, maxCoordinates):
 		else:
 			break
 
-	# checks if real rectange with same color. prefers vertical rectangles
+	# checks if real rectange with same color. prefers horizontal rectangles
 	for testx in range(startx, startx+width):
 		for testy in range(starty, starty+height):
 
@@ -59,7 +61,7 @@ def findSameColorSubRectangles(pixelatedImage, rectangle):
 			y += sameColorRectange.height
 
 		x += sameColorRectange.width
-
+	
 	return sameColorRectanges
 
 
@@ -71,7 +73,7 @@ def removeMootColorRectangles(colorRectanges):
 
 			if colorRectange.color in [(0,0,0),(255,255,255)]:
 				continue
-
+			
 			pixelatedSubRectanges.append(colorRectange)
 
 	return pixelatedSubRectanges
@@ -93,9 +95,21 @@ def findRectangleSizeOccurences(colorRectanges):
 	return rectangeSizeOccurences
 
 
+def almost_equal(colorA, colorB):
+	for i, _ in enumerate(colorA):
+		if abs(colorA[i] - colorB[i]) > 13:  # 5% difference
+			return False
+	return True
+
+
+# return a dictionary, with sub-rectangle coordinates as key and RectangleMatch as value
 def findRectangleMatches(rectangeSizeOccurences, pixelatedSubRectanges, searchImage):
 
 	rectangleMatches = {}
+
+	import json
+#	hist = dict()
+#	hist = json.loads(open('/tmp/hist').read())
 
 	for rectangeSizeOccurence in rectangeSizeOccurences:
 
@@ -103,12 +117,16 @@ def findRectangleMatches(rectangeSizeOccurences, pixelatedSubRectanges, searchIm
 		rectangleWidth = rectangleSize[0]
 		rectangleHeight = rectangleSize[1]
 		pixelsInRectangle = rectangleWidth*rectangleHeight
+		logging.info('For rectangle size {}x{}'.format(rectangleWidth, rectangleHeight))
 
+		# filter out the desired rectangle size
 		matchingRectangles = []
 		for colorRectange in pixelatedSubRectanges:
 
 			if (colorRectange.width, colorRectange.height) == rectangleSize:
 				matchingRectangles.append(colorRectange)
+
+#		hist[str(rectangeSizeOccurence)] = dict()
 
 		for x in range(searchImage.width - rectangleWidth):
 			for y in range(searchImage.height - rectangleHeight):
@@ -120,8 +138,9 @@ def findRectangleMatches(rectangeSizeOccurences, pixelatedSubRectanges, searchIm
 
 					for yy in range(rectangleHeight):
 						newPixel = searchImage.imageData[x+xx][y+yy]
-						rr,gg,bb = newPixel
 						matchData.append(newPixel)
+
+						rr,gg,bb = newPixel
 
 						r += rr
 						g += gg
@@ -129,15 +148,24 @@ def findRectangleMatches(rectangeSizeOccurences, pixelatedSubRectanges, searchIm
 
 				averageColor = (int(r / pixelsInRectangle), int(g / pixelsInRectangle), int(b / pixelsInRectangle))
 
+#				hist[str(rectangeSizeOccurence)][str((x, y))] = averageColor
+#				averageColor = tuple(hist[str(rectangeSizeOccurence)][str((x, y))])
+
+				# check which block has the same color
 				for matchingRectangle in matchingRectangles:
 
-					if (matchingRectangle.x,matchingRectangle.y) not in rectangleMatches:
+					if (matchingRectangle.x, matchingRectangle.y) not in rectangleMatches:
 						rectangleMatches[(matchingRectangle.x,matchingRectangle.y)] = []
-
+					
 					if matchingRectangle.color == averageColor:
 						newRectangleMatch = RectangleMatch(x, y, matchData)
 						rectangleMatches[(matchingRectangle.x,matchingRectangle.y)].append(newRectangleMatch)
 
+			if x % 64 == 0:
+				logging.info('Scanning in searchImage: {}/{}'.format(x, searchImage.width - rectangleWidth))
+
+#	open('/tmp/hist', 'w').write(json.dumps(hist))
+	
 	return rectangleMatches
 
 
@@ -157,10 +185,10 @@ def splitSingleMatchAndMultipleMatches(pixelatedSubRectanges, rectangleMatches):
 	newPixelatedSubRectanges = []
 	singleResults = []
 	for colorRectange in pixelatedSubRectanges:
-
+		
 		firstMatchData = rectangleMatches[(colorRectange.x,colorRectange.y)][0].data
-		singleMatch = True
-
+		singleMatch = True   # only one data matches
+		
 		for match in rectangleMatches[(colorRectange.x,colorRectange.y)]:
 
 			if firstMatchData != match.data:
@@ -204,15 +232,19 @@ def findGeometricMatchesForSingleResults(singleResults, pixelatedSubRectanges, r
 					xDistanceMatches = singleResultMatch.x - compareMatch.x
 					yDistanceMatches = singleResultMatch.y - compareMatch.y
 
-					if xDistance == xDistanceMatches and yDistance == yDistanceMatches:
-						if repr((compareMatch.data, singleResultMatch.data)) not in dataSeen:
+					if xDistance == xDistanceMatches and yDistance == yDistanceMatches \
+							and repr((compareMatch.data, singleResultMatch.data)) not in dataSeen:
 
-							dataSeen.add(repr((compareMatch.data, singleResultMatch.data)))
+						dataSeen.add(repr((compareMatch.data, singleResultMatch.data)))
+						if pixelatedSubRectange not in matchCount:
+ 							matchCount[pixelatedSubRectange] = 1
+						else:
+							matchCount[pixelatedSubRectange] += 1
 
-							if pixelatedSubRectange not in matchCount:
-								matchCount[pixelatedSubRectange] = 1
-							else:
-								matchCount[pixelatedSubRectange] += 1
+#						logging.info('{} determined {} via {}'.format(
+#							(singleResult.x, singleResult.y),
+#							(pixelatedSubRectange.x, pixelatedSubRectange.y),
+#							(singleResultMatch.x, singleResultMatch.y)))
 
 	for pixelatedSubRectange in matchCount:
 		if matchCount[pixelatedSubRectange] == 1:
@@ -229,7 +261,7 @@ def writeFirstMatchToImage(singleMatchRectangles, rectangleMatches, searchImage,
 
 		for x in range(singleResult.width):
 			for y in range(singleResult.height):
-
+				
 				color = searchImage.imageData[singleMatch.x+x][singleMatch.y+y]
 				unpixelatedOutputImage.putpixel((singleResult.x+x,singleResult.y+y), color)
 
@@ -242,7 +274,7 @@ def writeRandomMatchesToImage(pixelatedSubRectanges, rectangleMatches, searchIma
 
 		for x in range(singleResult.width):
 			for y in range(singleResult.height):
-
+				
 				color = searchImage.imageData[singleMatch.x+x][singleMatch.y+y]
 				unpixelatedOutputImage.putpixel((singleResult.x+x,singleResult.y+y), color)
 
@@ -279,3 +311,4 @@ def writeAverageMatchToImage(pixelatedSubRectanges, rectangleMatches, searchImag
 
 				currentPixel = img.getpixel((x,y))[0:3]
 				unpixelatedOutputImage.putpixel((pixelatedSubRectange.x+x,pixelatedSubRectange.y+y), currentPixel)
+
